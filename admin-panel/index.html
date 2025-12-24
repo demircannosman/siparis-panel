@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sipariş Yönetim Paneli</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Open Sans', sans-serif; }
+    .sidebar { background: #2c3e50; min-height: 100vh; }
+    .sidebar-item:hover { background: #34495e; }
+    .sidebar-item.active { background: #3498db; }
+    .status-yeni { background: #3498db; }
+    .status-onaylı { background: #27ae60; }
+    .status-iptal { background: #e74c3c; }
+    .status-kargo { background: #9b59b6; }
+    .status-teslim { background: #1abc9c; }
+    .status-eksik { background: #f39c12; }
+  </style>
+</head>
+<body class="bg-gray-100">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+const API = 'https://siparis-panel.onrender.com/api';
+
+const api = {
+  token: localStorage.getItem('token'),
+  setToken(t) { this.token = t; localStorage.setItem('token', t); },
+  clearToken() { this.token = null; localStorage.removeItem('token'); },
+  async req(url, opt = {}) {
+    const res = await fetch(API + url, {
+      ...opt,
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: 'Bearer ' + this.token } : {}), ...opt.headers }
+    });
+    if (res.status === 401 || res.status === 403) { this.clearToken(); location.reload(); }
+    return res.json();
+  },
+  get: (u) => api.req(u),
+  post: (u, d) => api.req(u, { method: 'POST', body: JSON.stringify(d) }),
+  put: (u, d) => api.req(u, { method: 'PUT', body: JSON.stringify(d) }),
+  patch: (u, d) => api.req(u, { method: 'PATCH', body: JSON.stringify(d) }),
+  del: (u) => api.req(u, { method: 'DELETE' })
+};
+
+function Login({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const res = await api.post('/auth/login', { username, password });
+    if (res.token) { api.setToken(res.token); onLogin(res.user); }
+    else setError(res.error || 'Giriş başarısız');
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-800">
+      <div className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md">
+        <h1 className="text-2xl font-bold text-center mb-6">Sipariş Paneli</h1>
+        {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
+        <form onSubmit={handleSubmit}>
+          <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Kullanıcı Adı" className="w-full border rounded-lg px-4 py-3 mb-4" required />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Şifre" className="w-full border rounded-lg px-4 py-3 mb-4" required />
+          <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 rounded-lg font-medium">Giriş Yap</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function OrderModal({ order, onClose, onSave, statuses, shippingCos }) {
+  const [form, setForm] = useState({...order});
+  const [products, setProducts] = useState([]);
+
+  useEffect(() => {
+    try { setProducts(typeof order.products === 'string' ? JSON.parse(order.products) : order.products || []); } catch { setProducts([]); }
+  }, [order]);
+
+  const handleChange = (e) => setForm({...form, [e.target.name]: e.target.value});
+
+  const handleProductChange = (i, field, value) => {
+    const newP = [...products]; newP[i][field] = value; setProducts(newP);
+    const total = newP.reduce((s, p) => s + (parseFloat(p.price) || 0) * (parseInt(p.quantity) || 1), 0);
+    setForm({...form, total_amount: total, total_quantity: newP.reduce((s, p) => s + (parseInt(p.quantity) || 1), 0)});
+  };
+
+  const handleSave = async () => { await api.put(`/orders/${order.id}`, {...form, products: JSON.stringify(products)}); onSave(); };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl my-8">
+        <div className="bg-blue-500 text-white px-6 py-4 rounded-t-lg flex justify-between">
+          <div><h2 className="text-xl font-semibold">{form.customer_name} -{new Date(order.created_at).toLocaleDateString('tr-TR')}</h2><p className="text-blue-100 text-sm">Zorunlu alanlara dikkat ediniz.</p></div>
+          <button onClick={onClose} className="text-2xl">&times;</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Müşteri Adı</label><input name="customer_name" value={form.customer_name || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+            <div><label className="block text-sm font-medium mb-1">Telefon</label><input name="customer_phone" value={form.customer_phone || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+            <div><label className="block text-sm font-medium mb-1">E-mail</label><input name="customer_email" value={form.customer_email || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+          </div>
+          
+          <div><label className="block text-sm font-medium mb-2">Ürünler</label>
+            {products.map((p, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 mb-2">
+                <input value={p.name || ''} onChange={(e) => handleProductChange(i, 'name', e.target.value)} placeholder="Ürün" className="col-span-5 border rounded px-2 py-2" />
+                <input value={p.price || ''} onChange={(e) => handleProductChange(i, 'price', e.target.value)} placeholder="Fiyat" className="col-span-2 border rounded px-2 py-2" />
+                <input value={p.quantity || 1} onChange={(e) => handleProductChange(i, 'quantity', e.target.value)} placeholder="Adet" className="col-span-2 border rounded px-2 py-2" />
+                <button onClick={() => setProducts(products.filter((_, j) => j !== i))} className="col-span-1 bg-red-500 text-white rounded">✕</button>
+                <button onClick={() => setProducts([...products, {name: '', price: 0, quantity: 1}])} className="col-span-2 bg-green-500 text-white rounded">+</button>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Toplam Adet</label><input name="total_quantity" value={form.total_quantity || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+            <div><label className="block text-sm font-medium mb-1">Toplam Tutar</label><input name="total_amount" value={form.total_amount || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+          </div>
+
+          <div><label className="block text-sm font-medium mb-1">Adres</label><textarea name="address" value={form.address || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" rows="2" /></div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-sm font-medium mb-1">İl</label><input name="city" value={form.city || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+            <div><label className="block text-sm font-medium mb-1">İlçe</label><input name="district" value={form.district || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+            <div><label className="block text-sm font-medium mb-1">Mahalle</label><input name="neighborhood" value={form.neighborhood || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Site</label><input value={order.site_name || 'nemlendiricimkapida.site'} disabled className="w-full border rounded px-3 py-2 bg-gray-100" /></div>
+            <div><label className="block text-sm font-medium mb-1">Ödeme Yöntemi</label>
+              <select name="payment_method" value={form.payment_method || ''} onChange={handleChange} className="w-full border rounded px-3 py-2">
+                <option value="Kapıda Ödeme">Kapıda Ödeme</option><option value="Kapıda Ödeme KK">Kapıda Ödeme KK</option><option value="Havale/EFT">Havale/EFT</option>
+              </select>
+            </div>
+            <div><label className="block text-sm font-medium mb-1">Kargo</label>
+              <select name="shipping_company" value={form.shipping_company || ''} onChange={handleChange} className="w-full border rounded px-3 py-2">
+                <option value="">Kargo Seçiniz</option>{shippingCos.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+              </select>
+            </div>
+            <div><label className="block text-sm font-medium mb-1">Taşıyıcı Kargo</label><input name="shipping_tracking" value={form.shipping_tracking || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" /></div>
+          </div>
+
+          <div><label className="block text-sm font-medium mb-1">Bilgilendirme</label><textarea name="internal_note" value={form.internal_note || ''} onChange={handleChange} className="w-full border rounded px-3 py-2" rows="2" /></div>
+          <div><label className="block text-sm font-medium mb-1">Müşteri Notu</label><input name="customer_note" value={form.customer_note || ''} onChange={handleChange} className="w-full border rounded px-3 py-2 bg-gray-50" /></div>
+
+          <div className="flex items-center gap-4">
+            <span className="font-medium">WHATSAPP-SMS</span>
+            <a href={`https://wa.me/90${form.customer_phone}`} target="_blank" className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">Mesaj Gönder</a>
+          </div>
+
+          <div><label className="block text-sm font-medium mb-1">Sipariş Durumu</label>
+            <select name="status" value={form.status || 'Yeni'} onChange={handleChange} className="w-full border rounded px-3 py-2">
+              {statuses.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+
+          {order.history?.length > 0 && <div><label className="block text-sm font-medium mb-1">Sipariş Hareketleri</label><div className="border rounded p-3 bg-gray-50 text-sm max-h-24 overflow-y-auto">{order.history.map((h, i) => <div key={i}>{new Date(h.created_at).toLocaleString('tr-TR')} - {h.old_status || '-'} → {h.new_status}</div>)}</div></div>}
+        </div>
+        <div className="bg-gray-50 px-6 py-4 rounded-b-lg flex justify-end gap-3">
+          <button onClick={onClose} className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded">Kapat</button>
+          <button onClick={handleSave} className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded">Kaydet</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Orders() {
+  const [orders, setOrders] = useState([]);
+  const [statuses, setStatuses] = useState([]);
+  const [shippingCos, setShippingCos] = useState([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+
+  const loadOrders = async () => {
+    const params = new URLSearchParams();
+    if (statusFilter !== 'all') params.append('status', statusFilter);
+    if (search) params.append('search', search);
+    params.append('page', page);
+    const res = await api.get('/orders?' + params);
+    setOrders(res.orders || []);
+    setTotalPages(res.pagination?.pages || 1);
+  };
+
+  useEffect(() => { api.get('/order-statuses').then(setStatuses); api.get('/shipping-companies').then(setShippingCos); }, []);
+  useEffect(() => { loadOrders(); }, [statusFilter, page]);
+
+  const handleStatusChange = async (id, status) => { await api.patch(`/orders/${id}/status`, { status }); loadOrders(); };
+  const openDetail = async (o) => { const d = await api.get(`/orders/${o.id}`); setSelectedOrder(d); };
+
+  const tabs = ['all', 'Yeni', 'Onaylı', 'Eksik', 'İptal', 'Kargo', 'Teslim', 'Ulaşılamayan', 'İade'];
+  const getStatusClass = (s) => ({ Yeni: 'status-yeni', Onaylı: 'status-onaylı', İptal: 'status-iptal', Kargo: 'status-kargo', Teslim: 'status-teslim', Eksik: 'status-eksik' }[s] || 'bg-gray-500');
+
+  return (
+    <div className="p-6">
+      <div className="bg-white rounded-lg shadow mb-4 p-4">
+        <label className="block text-sm font-medium mb-1">Aranacak İçerik</label>
+        <div className="flex gap-4">
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && loadOrders()} placeholder="Aranacak Metin" className="flex-1 border rounded px-4 py-2" />
+          <button onClick={loadOrders} className="bg-blue-500 text-white px-6 py-2 rounded">Bul</button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        {tabs.map(t => <button key={t} onClick={() => { setStatusFilter(t); setPage(1); }} className={`px-4 py-2 rounded text-white ${statusFilter === t ? 'bg-blue-600' : 'bg-gray-400'}`}>{t === 'all' ? 'Tümü' : t}</button>)}
+      </div>
+
+      <div className="bg-white rounded-lg shadow overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-700 text-white">
+            <tr><th className="px-4 py-3 text-left">ID</th><th className="px-4 py-3 text-left">Tarih</th><th className="px-4 py-3 text-left">İsim</th><th className="px-4 py-3 text-left">Telefon</th><th className="px-4 py-3 text-left">Site</th><th className="px-4 py-3 text-left">Şehir</th><th className="px-4 py-3 text-left">Durum</th><th className="px-4 py-3 text-left">Düzenle</th></tr>
+          </thead>
+          <tbody>
+            {orders.map((o, i) => (
+              <tr key={o.id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                <td className="px-4 py-3"><span className={`px-2 py-1 rounded text-xs text-white ${o.status === 'Yeni' ? 'bg-blue-500' : 'bg-gray-400'}`}>{o.order_number}</span></td>
+                <td className="px-4 py-3 text-sm">{new Date(o.created_at).toLocaleDateString('tr-TR')}<br/><span className="text-gray-500">{new Date(o.created_at).toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'})}</span></td>
+                <td className="px-4 py-3 font-medium">{o.customer_name}</td>
+                <td className="px-4 py-3">{o.customer_phone}</td>
+                <td className="px-4 py-3 text-sm">{o.site_name || 'nemlendiricimkapida.site'}</td>
+                <td className="px-4 py-3">{o.city}</td>
+                <td className="px-4 py-3"><select value={o.status} onChange={(e) => handleStatusChange(o.id, e.target.value)} className={`px-2 py-1 rounded text-white text-sm ${getStatusClass(o.status)}`}>{statuses.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></td>
+                <td className="px-4 py-3"><button onClick={() => openDetail(o)} className="bg-blue-500 text-white px-3 py-1 rounded">✏️</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {totalPages > 1 && <div className="p-4 flex justify-between border-t"><span>Sayfa {page}/{totalPages}</span><div className="flex gap-2"><button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1} className="px-4 py-2 border rounded disabled:opacity-50">Önceki</button><button onClick={() => setPage(p => p+1)} disabled={page >= totalPages} className="px-4 py-2 border rounded disabled:opacity-50">Sonraki</button></div></div>}
+      </div>
+
+      {selectedOrder && <OrderModal order={selectedOrder} onClose={() => setSelectedOrder(null)} onSave={() => { setSelectedOrder(null); loadOrders(); }} statuses={statuses} shippingCos={shippingCos} />}
+    </div>
+  );
+}
+
+function Dashboard() {
+  const [stats, setStats] = useState(null);
+  useEffect(() => { api.get('/dashboard/stats').then(setStats); }, []);
+  if (!stats) return <div className="p-6">Yükleniyor...</div>;
+  return (
+    <div className="p-6">
+      <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+      <div className="grid grid-cols-4 gap-6 mb-8">
+        <div className="bg-blue-500 text-white rounded-lg p-6"><div className="text-4xl font-bold">{stats.todayOrders}</div><div>Bugünkü Sipariş</div></div>
+        <div className="bg-yellow-500 text-white rounded-lg p-6"><div className="text-4xl font-bold">{stats.pendingOrders}</div><div>Bekleyen</div></div>
+        <div className="bg-green-500 text-white rounded-lg p-6"><div className="text-4xl font-bold">{stats.totalOrders}</div><div>Toplam</div></div>
+        <div className="bg-purple-500 text-white rounded-lg p-6"><div className="text-4xl font-bold">₺{(stats.todayRevenue || 0).toLocaleString('tr-TR')}</div><div>Bugünkü Ciro</div></div>
+      </div>
+    </div>
+  );
+}
+
+function Sites() {
+  const [sites, setSites] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editSite, setEditSite] = useState(null);
+
+  useEffect(() => { api.get('/sites').then(setSites); }, []);
+  const loadSites = () => api.get('/sites').then(setSites);
+
+  return (
+    <div className="p-6">
+      <div className="flex justify-between mb-6"><h1 className="text-2xl font-bold">Siteler</h1><button onClick={() => { setEditSite(null); setShowModal(true); }} className="bg-blue-500 text-white px-4 py-2 rounded">+ Site Ekle</button></div>
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-gray-700 text-white"><tr><th className="px-4 py-3 text-left">ID</th><th className="px-4 py-3 text-left">Site URL</th><th className="px-4 py-3 text-left">Ana Ürün</th><th className="px-4 py-3 text-left">İşlem</th></tr></thead>
+          <tbody>{sites.map(s => <tr key={s.id} className="border-t"><td className="px-4 py-3">{s.id}</td><td className="px-4 py-3">{s.site_url}</td><td className="px-4 py-3">{s.main_product}</td><td className="px-4 py-3"><button onClick={() => { setEditSite(s); setShowModal(true); }} className="bg-blue-500 text-white px-3 py-1 rounded mr-2">✏️</button><button onClick={async () => { if(confirm('Sil?')) { await api.del(`/sites/${s.id}`); loadSites(); }}} className="bg-red-500 text-white px-3 py-1 rounded">🗑️</button></td></tr>)}</tbody>
+        </table>
+      </div>
+      {showModal && <SiteModal site={editSite} onClose={() => setShowModal(false)} onSave={() => { setShowModal(false); loadSites(); }} />}
+    </div>
+  );
+}
+
+function SiteModal({ site, onClose, onSave }) {
+  const [form, setForm] = useState(site || { site_name: '', site_url: '', main_product: '' });
+  const handleSubmit = async (e) => { e.preventDefault(); if (site?.id) await api.put(`/sites/${site.id}`, form); else await api.post('/sites', form); onSave(); };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-bold mb-4">{site ? 'Site Düzenle' : 'Yeni Site'}</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input value={form.site_name} onChange={(e) => setForm({...form, site_name: e.target.value})} placeholder="Site Adı" className="w-full border rounded px-3 py-2" required />
+          <input value={form.site_url} onChange={(e) => setForm({...form, site_url: e.target.value})} placeholder="Site URL" className="w-full border rounded px-3 py-2" required />
+          <input value={form.main_product} onChange={(e) => setForm({...form, main_product: e.target.value})} placeholder="Ana Ürün" className="w-full border rounded px-3 py-2" />
+          <div className="flex justify-end gap-3"><button type="button" onClick={onClose} className="px-4 py-2 border rounded">İptal</button><button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded">Kaydet</button></div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [page, setPage] = useState('orders');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (localStorage.getItem('token')) {
+      api.setToken(localStorage.getItem('token'));
+      api.get('/auth/me').then(u => { if (u && !u.error) setUser(u); setLoading(false); }).catch(() => setLoading(false));
+    } else setLoading(false);
+  }, []);
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center">Yükleniyor...</div>;
+  if (!user) return <Login onLogin={setUser} />;
+
+  return (
+    <div className="flex">
+      <aside className="sidebar w-64 text-white fixed h-full">
+        <div className="p-4 border-b border-gray-700"><h1 className="text-xl font-bold">Sipariş Paneli</h1></div>
+        <nav className="p-4">
+          {[{id: 'dashboard', label: 'Dashboard', icon: '📊'}, {id: 'orders', label: 'Siparişler', icon: '📦'}, {id: 'sites', label: 'Siteler', icon: '🌐'}].map(m => (
+            <button key={m.id} onClick={() => setPage(m.id)} className={`sidebar-item w-full flex items-center gap-3 px-4 py-3 rounded mb-2 text-left ${page === m.id ? 'active' : ''}`}><span>{m.icon}</span>{m.label}</button>
+          ))}
+        </nav>
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700">
+          <button onClick={() => { api.clearToken(); setUser(null); }} className="text-gray-400 hover:text-white">🚪 Çıkış Yap</button>
+        </div>
+      </aside>
+      <main className="flex-1 ml-64">{page === 'dashboard' && <Dashboard />}{page === 'orders' && <Orders />}{page === 'sites' && <Sites />}</main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
